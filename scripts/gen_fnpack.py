@@ -14,6 +14,7 @@
 import argparse
 import hashlib
 import json
+import os
 import re
 import sys
 from datetime import datetime, timezone
@@ -25,7 +26,10 @@ APP_KEY = "huitai"
 PORT = "7401"
 ARCHS = ("x86", "arm")
 MAX_RELEASES = 10  # 索引只留最近若干版本，历史上的版本仍可从 Release 页取
-REPO_URL = "https://github.com/TaroCats/huitai"
+
+# 仓库地址优先取 CI 里的 GITHUB_REPOSITORY：fork 或换到上游发版时不用改代码
+REPO_SLUG = os.environ.get("GITHUB_REPOSITORY") or "TaroCats/huitai"
+REPO_URL = f"https://github.com/{REPO_SLUG}"
 
 # 图标/README 用绝对地址：相对路径要客户端自己拼基准 URL，换成绝对 URL 更稳（与已上架的源一致）
 ICON_URL = f"{REPO_URL}/raw/main/packaging/fnos/ICON_256.PNG"
@@ -33,7 +37,7 @@ README_URL = f"{REPO_URL}#readme"
 
 SOURCE_INFO = {
     "name": "绘台 Huitai",
-    "author": "TaroCats",
+    "author": REPO_SLUG.split("/")[0],
     "homepage": REPO_URL,
     "description": "绘台 AI 生图工作台的应用源：随着打 tag 自动跟随新版本，指向 GitHub Release 里的官方安装包。",
 }
@@ -139,11 +143,11 @@ def main() -> None:
         "categories": ["AI赋能", "影音娱乐"],
         "icon_url": ICON_URL,
         "readme_url": README_URL,
-        "bug_report_url": "https://github.com/TaroCats/huitai/issues",
+        "bug_report_url": f"{REPO_URL}/issues",
         "maintainer": "TaroCats",
         "maintainer_url": "https://github.com/TaroCats",
         "distributor": "TaroCats",
-        "distributor_url": "https://github.com/TaroCats/huitai",
+        "distributor_url": REPO_URL,
         "run_as": "package",
         "install_type": "",
         "is_docker": True,
@@ -174,7 +178,7 @@ def main() -> None:
                          f"（{arch}，{sizes[arch]} 字节）")
         lines += ["", "## 飞牛 / FnDepot 更新", "",
                   "- 飞牛应用中心手动安装上面任一 FPK；",
-                  "- 或在 FnDepot 里添加源 `https://github.com/TaroCats/huitai`，之后自动跟随本版本更新。"]
+                  f"- 或在 FnDepot 里添加源 `{REPO_URL}`，之后自动跟随本版本更新。"]
         Path(args.notes_out).parent.mkdir(parents=True, exist_ok=True)
         Path(args.notes_out).write_text("\n".join(lines) + "\n", encoding="utf-8")
         print(f"已写入 {args.notes_out}")
