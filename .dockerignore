@@ -1,0 +1,13 @@
+.git
+.gitignore
+.github
+data
+output
+dist
+packaging
+scripts
+docs
+*.fpk
+*.md
+.DS_Store
+__pycache__
