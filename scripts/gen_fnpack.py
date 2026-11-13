@@ -161,7 +161,8 @@ def main() -> None:
     print(f"{APP_KEY} {args.version}: " + " / ".join(f"{a} {sizes[a]}B" for a in ARCHS))
 
     if args.notes_out:
-        lines = [f"绘台 Huitai {args.version}", ""]
+        # 不写标题行：Release 标题已经是「绘台 Huitai <版本>」，正文从内容开始
+        lines = []
         if changelog:
             lines += [changelog, ""]
         lines += ["## 镜像", "",
