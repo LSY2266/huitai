@@ -1,0 +1,360 @@
+name: Release
+
+# 打 tag 即发布：矩阵编译 x86 / arm 两种架构的 Docker 镜像与 FPK 安装包，
+# 汇总成多架构镜像清单后创建 Release，并把 fnpack.json（FnDepot 源索引）回写 main。
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+  packages: write
+
+env:
+  APP_NAME: huitai
+  APP_PORT: "7401"
+
+jobs:
+  # ------------------------------------------------------------------ 版本
+  prepare:
+    name: 解析版本
+    runs-on: ubuntu-24.04
+    outputs:
+      version: ${{ steps.meta.outputs.version }}
+      tag: ${{ steps.meta.outputs.tag }}
+      minor: ${{ steps.meta.outputs.minor }}
+      image: ${{ steps.meta.outputs.image }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: 校验 tag 与 app/config.py 一致
+        id: meta
+        shell: bash
+        run: |
+          set -euo pipefail
+          # 版本号唯一来源：app/config.py 的 VERSION（与 build-image.sh 同一套解析规则）
+          VERSION=$(sed -n 's/^VERSION *= *"\([0-9][0-9.]*\)".*/\1/p' app/config.py | head -1)
+          [ -n "$VERSION" ] || { echo "::error::app/config.py 里找不到 VERSION"; exit 1; }
+
+          if [ "${GITHUB_REF_TYPE}" = "tag" ]; then
+            TAG="${GITHUB_REF_NAME}"
+            if [ "${TAG#v}" != "$VERSION" ]; then
+              echo "::error::tag ${TAG} 与 app/config.py 的 VERSION=${VERSION} 不一致。版本号只改 app/config.py，再打 v\${VERSION} 的 tag。"
+              exit 1
+            fi
+          else
+            TAG="v${VERSION}"
+            echo "::notice::手动触发，按当前 VERSION=${VERSION} 发布 ${TAG}"
+          fi
+
+          # GHCR 仓库名必须全小写
+          IMAGE="ghcr.io/${GITHUB_REPOSITORY,,}"
+          {
+            echo "version=${VERSION}"
+            echo "tag=${TAG}"
+            echo "minor=${VERSION%.*}"
+            echo "image=${IMAGE}"
+          } >> "$GITHUB_OUTPUT"
+          echo "版本 ${VERSION} → ${IMAGE}:${VERSION}"
+
+  # ------------------------------------------------------- 镜像（矩阵构建）
+  docker:
+    name: 镜像 ${{ matrix.arch }}
+    needs: prepare
+    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: amd64
+            platform: linux/amd64
+          - arch: arm64
+            platform: linux/arm64
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: 启用 QEMU（跨架构构建）
+        uses: docker/setup-qemu-action@v3
+
+      - uses: docker/setup-buildx-action@v3
+
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: 构建并推送 ${{ matrix.platform }}
+        id: build
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          platforms: ${{ matrix.platform }}
+          build-args: |
+            APP_VERSION=${{ needs.prepare.outputs.version }}
+          labels: |
+            org.opencontainers.image.title=绘台 Huitai
+            org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
+            org.opencontainers.image.version=${{ needs.prepare.outputs.version }}
+            org.opencontainers.image.revision=${{ github.sha }}
+          # 按 digest 推送，等两个架构都好了再合并成清单，避免中途出现「只有一半架构」的 tag
+          outputs: type=image,name=${{ needs.prepare.outputs.image }},push-by-digest=true,name-canonical=true,push=true
+          cache-from: type=gha,scope=${{ matrix.arch }}
+          cache-to: type=gha,mode=max,scope=${{ matrix.arch }}
+
+      - name: 记录 digest
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/digests
+          digest='${{ steps.build.outputs.digest }}'
+          [ -n "$digest" ] || { echo "::error::没有拿到 digest"; exit 1; }
+          touch "/tmp/digests/${digest#sha256:}"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: digest-${{ matrix.arch }}
+          path: /tmp/digests/*
+          if-no-files-found: error
+          retention-days: 3
+
+  # --------------------------------------------------- 合并多架构镜像清单
+  manifest:
+    name: 合并镜像清单
+    needs: [prepare, docker]
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: /tmp/digests
+          pattern: digest-*
+          merge-multiple: true
+
+      - uses: docker/setup-buildx-action@v3
+
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: 合成多架构清单（${{ needs.prepare.outputs.version }} / ${{ needs.prepare.outputs.minor }} / latest）
+        shell: bash
+        env:
+          IMAGE: ${{ needs.prepare.outputs.image }}
+          VERSION: ${{ needs.prepare.outputs.version }}
+          MINOR: ${{ needs.prepare.outputs.minor }}
+        run: |
+          set -euo pipefail
+          cd /tmp/digests
+          SOURCES=""
+          for f in *; do
+            SOURCES="$SOURCES ${IMAGE}@sha256:${f}"
+          done
+          echo "合成来源：${SOURCES}"
+          # shellcheck disable=SC2086
+          docker buildx imagetools create \
+            --tag "${IMAGE}:${VERSION}" \
+            --tag "${IMAGE}:${MINOR}" \
+            --tag "${IMAGE}:latest" \
+            ${SOURCES}
+
+      - name: 断言清单同时含 amd64 与 arm64
+        shell: bash
+        env:
+          IMAGE: ${{ needs.prepare.outputs.image }}
+          VERSION: ${{ needs.prepare.outputs.version }}
+        run: |
+          set -euo pipefail
+          docker buildx imagetools inspect "${IMAGE}:${VERSION}" | tee /tmp/inspect.txt
+          grep -q 'linux/amd64' /tmp/inspect.txt || { echo "::error::清单缺少 linux/amd64"; exit 1; }
+          grep -q 'linux/arm64' /tmp/inspect.txt || { echo "::error::清单缺少 linux/arm64"; exit 1; }
+          COUNT=$(grep -c 'Platform:' /tmp/inspect.txt || true)
+          [ "$COUNT" -ge 2 ] || { echo "::error::清单里只有 ${COUNT} 个平台"; exit 1; }
+          echo "清单 ${IMAGE}:${VERSION} 含 ${COUNT} 个平台"
+
+      - name: 冒烟测试（本机架构直接跑起来打 /api/health）
+        shell: bash
+        env:
+          IMAGE: ${{ needs.prepare.outputs.image }}
+          VERSION: ${{ needs.prepare.outputs.version }}
+        run: |
+          set -euo pipefail
+          docker pull "${IMAGE}:${VERSION}"
+          docker run -d --name smoke -p 17401:7401 "${IMAGE}:${VERSION}"
+          ok=0
+          for i in $(seq 1 30); do
+            if curl -fsS "http://127.0.0.1:17401/api/health" -o /tmp/health.json; then ok=1; break; fi
+            sleep 2
+          done
+          docker logs smoke | tail -20 || true
+          docker rm -f smoke > /dev/null 2>&1 || true
+          [ "$ok" = "1" ] || { echo "::error::容器起来了但 /api/health 不通"; exit 1; }
+          echo "health: $(cat /tmp/health.json)"
+
+  # ------------------------------------------------------------ FPK 安装包
+  fpk:
+    name: FPK ${{ matrix.arch }}
+    needs: [prepare, manifest]
+    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        arch: [x86, arm]
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: 准备 fnpack
+        run: bash scripts/install-fnpack.sh
+
+      - name: 打包（渲染 manifest 与镜像 tag）
+        shell: bash
+        env:
+          ARCH: ${{ matrix.arch }}
+          VERSION: ${{ needs.prepare.outputs.version }}
+          IMAGE: ${{ needs.prepare.outputs.image }}
+        run: |
+          set -euo pipefail
+          python3 scripts/build_fpk.py \
+            --arch "${ARCH}" \
+            --version "${VERSION}" \
+            --image "${IMAGE}:${VERSION}" \
+            --out-dir dist
+
+      - name: 校验包名与内容
+        shell: bash
+        env:
+          ARCH: ${{ matrix.arch }}
+          VERSION: ${{ needs.prepare.outputs.version }}
+        run: |
+          set -euo pipefail
+          ls -l dist/
+          test -f "dist/${APP_NAME}_${VERSION}_${ARCH}.fpk"
+          # build_fpk.py 已校验 appname/version/platform/checksum 与镜像引用，这里再兜一层包体结构
+          tar -tf "dist/${APP_NAME}_${VERSION}_${ARCH}.fpk" | sort | tr '\n' ' '
+          echo
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: fpk-${{ matrix.arch }}
+          path: dist/*.fpk
+          if-no-files-found: error
+
+  # ------------------------------------------------- Release + 源索引回写
+  release:
+    name: 发布
+    needs: [prepare, fpk]
+    runs-on: ubuntu-24.04
+    steps:
+      # 检出 tag 指向的提交（而不是 main）：索引里的图标/脚本与本次发版保持一致。
+      # 回写 main 时在步骤内切分支——dist/ 被 .gitignore 忽略，切分支不会带走 FPK。
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          pattern: fpk-*
+          merge-multiple: true
+
+      - name: 生成 Release 说明与 fnpack.json
+        shell: bash
+        env:
+          VERSION: ${{ needs.prepare.outputs.version }}
+          TAG: ${{ needs.prepare.outputs.tag }}
+        run: |
+          set -euo pipefail
+          ls -l dist/
+          python3 scripts/gen_fnpack.py \
+            --version "${VERSION}" \
+            --package "x86=dist/${APP_NAME}_${VERSION}_x86.fpk" \
+            --package "arm=dist/${APP_NAME}_${VERSION}_arm.fpk" \
+            --base-url "https://github.com/${GITHUB_REPOSITORY}/releases/download/${TAG}" \
+            --notes-out dist/release-notes.md
+          python3 -m json.tool fnpack.json > /dev/null   # 严格 JSON 兜底
+          cat dist/release-notes.md
+
+      - name: 创建或更新 Release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ needs.prepare.outputs.tag }}
+          VERSION: ${{ needs.prepare.outputs.version }}
+        run: |
+          set -euo pipefail
+          if gh release view "$TAG" > /dev/null 2>&1; then
+            gh release upload "$TAG" dist/*.fpk --clobber
+            gh release edit "$TAG" --notes-file dist/release-notes.md --title "绘台 Huitai v${VERSION}"
+          else
+            gh release create "$TAG" \
+              --title "绘台 Huitai v${VERSION}" \
+              --notes-file dist/release-notes.md \
+              dist/*.fpk
+          fi
+          gh release view "$TAG" --json url,assets --jq '.url, (.assets[].name)'
+
+      - name: 回写 fnpack.json 到 main
+        shell: bash
+        env:
+          VERSION: ${{ needs.prepare.outputs.version }}
+          TAG: ${{ needs.prepare.outputs.tag }}
+          BASE_URL: https://github.com/${{ github.repository }}/releases/download/${{ needs.prepare.outputs.tag }}
+        run: |
+          set -euo pipefail
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+
+          # 切到 main 再生成一次：这样是在 main 现有索引上做增量合并，
+          # 不会把 main 上已有的历史版本（比如补发旧 tag 时）冲掉。
+          git fetch origin main
+          git checkout -B main FETCH_HEAD
+          python3 scripts/gen_fnpack.py \
+            --version "${VERSION}" \
+            --package "x86=dist/${APP_NAME}_${VERSION}_x86.fpk" \
+            --package "arm=dist/${APP_NAME}_${VERSION}_arm.fpk" \
+            --base-url "${BASE_URL}"
+          python3 -m json.tool fnpack.json > /dev/null   # 严格 JSON 兜底
+
+          git add fnpack.json
+          if git diff --cached --quiet; then
+            echo "fnpack.json 无变化，跳过提交"
+            exit 0
+          fi
+          git commit -m "chore(release): FnDepot 源索引更新到 ${VERSION} [skip ci]"
+          if git push origin HEAD:main; then
+            echo "已回写 main：$(git rev-parse --short HEAD)"
+          else
+            echo "::warning::回写 main 失败（可能是分支保护）。请把下面的 fnpack.json 手动提交，否则 FnDepot 不会看到新版本："
+            cat fnpack.json
+          fi
+
+      - name: 校验 GHCR 镜像可匿名拉取（装 FPK 的机器不会 docker login）
+        shell: bash
+        env:
+          REPO: ${{ github.repository }}
+          VERSION: ${{ needs.prepare.outputs.version }}
+        run: |
+          set -euo pipefail
+          REPO_LC=$(echo "$REPO" | tr '[:upper:]' '[:lower:]')
+          ACCEPT='application/vnd.oci.image.index.v1+json,application/vnd.docker.distribution.manifest.list.v2+json,application/vnd.oci.image.manifest.v1+json,application/vnd.docker.distribution.manifest.v2+json'
+          if ! curl -fsS "https://ghcr.io/token?scope=repository:${REPO_LC}:pull&service=ghcr.io" -o /tmp/ghcr-token.json; then
+            echo "::error::拿不到 GHCR 匿名 token"; exit 1
+          fi
+          TOKEN=$(python3 -c "import json;print(json.load(open('/tmp/ghcr-token.json')).get('token',''))")
+          if ! curl -fsS -H "Authorization: Bearer ${TOKEN}" -H "Accept: ${ACCEPT}" \
+                 "https://ghcr.io/v2/${REPO_LC}/manifests/${VERSION}" -o /tmp/manifest.json; then
+            echo "::error::ghcr.io/${REPO_LC}:${VERSION} 匿名不可拉。装 FPK 的设备不会 docker login，这一步不通等于装不上。"
+            echo "::error::到 https://github.com/users/${GITHUB_REPOSITORY_OWNER}/packages/container/${APP_NAME}/settings 把可见性改成 Public，然后重跑本工作流。"
+            exit 1
+          fi
+          echo "镜像 ghcr.io/${REPO_LC}:${VERSION} 匿名可拉取"
