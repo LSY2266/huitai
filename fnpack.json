@@ -1,0 +1,55 @@
+{
+  "schema_version": "2",
+  "source_info": {
+    "name": "绘台 Huitai",
+    "author": "TaroCats",
+    "homepage": "https://github.com/TaroCats/huitai",
+    "description": "绘台 AI 生图工作台的应用源：随着打 tag 自动跟随新版本，指向 GitHub Release 里的官方安装包。"
+  },
+  "apps": {
+    "huitai": {
+      "display_name": "绘台",
+      "desc": "AI 生图工作台：手机浏览器直接打开，接入 GPT Image 2.5 / 2.6 及任何 OpenAI 兼容生图接口，支持文生图、图生图、局部修图、GIF 动图、SVG 矢量图。任务提交后由服务端执行，关页面、锁屏、重启服务都不会丢。",
+      "platform": [
+        "x86",
+        "arm"
+      ],
+      "categories": [
+        "AI赋能",
+        "影音娱乐"
+      ],
+      "icon_url": "https://github.com/TaroCats/huitai/raw/main/packaging/fnos/ICON_256.PNG",
+      "readme_url": "https://github.com/TaroCats/huitai#readme",
+      "bug_report_url": "https://github.com/TaroCats/huitai/issues",
+      "maintainer": "TaroCats",
+      "maintainer_url": "https://github.com/TaroCats",
+      "distributor": "TaroCats",
+      "distributor_url": "https://github.com/TaroCats/huitai",
+      "run_as": "package",
+      "install_type": "",
+      "is_docker": true,
+      "service_port": "7401",
+      "releases": {
+        "2.1.1": {
+          "os_min_version": "0.9.27",
+          "changelog": "绘台 Huitai 2.1.1",
+          "updated_at": "2026-11-13T02:34:08Z",
+          "packages": {
+            "x86": {
+              "download_url": "https://github.com/TaroCats/huitai/releases/download/v2.1.1/huitai_2.1.1_x86.fpk",
+              "sha256": "2d79a0effdf0a270a5115510bdc59fd2d8d36373d1b91db762c59c91fba5bd41",
+              "size": 17852,
+              "updated_at": "2026-11-13T02:34:08Z"
+            },
+            "arm": {
+              "download_url": "https://github.com/TaroCats/huitai/releases/download/v2.1.1/huitai_2.1.1_arm.fpk",
+              "sha256": "780d34c2201b9cf09eca972bd1574d51ab85607f3538ce19be8b6393e7511e2a",
+              "size": 17854,
+              "updated_at": "2026-11-13T02:34:08Z"
+            }
+          }
+        }
+      }
+    }
+  }
+}
