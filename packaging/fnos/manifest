@@ -1,0 +1,15 @@
+appname               = huitai
+version               = 0.0.0
+display_name          = 绘台
+desc                  = <p>绘台 Huitai 是一个跑在自己 NAS / 服务器上的 AI 生图工作台：手机浏览器直接打开，接入 GPT Image 2.5 / 2.6 及任何 OpenAI 兼容生图接口，支持文生图、图生图、局部修图、GIF 动图与 SVG 矢量图。</p><p><b>核心区别：</b>任务提交后由服务端执行，不依赖浏览器——关页面、锁屏、刷新、重启服务，任务都不会丢。</p><p><b>技术栈：</b>FastAPI + SQLite + 后台线程池，前端原生 HTML/CSS/JS 无构建。</p><p>安装后打开 <b>http://设备IP:7401</b>，首次启动会引导创建管理员账号，再在「设置」里填写生图接口地址与 Key。</p>
+platform              = x86
+source                = thirdparty
+service_port          = 7401
+checkport             = true
+os_min_version        = 0.9.27
+maintainer            = TaroCats
+maintainer_url        = https://github.com/TaroCats
+distributor           = TaroCats
+distributor_url       = https://github.com/TaroCats/huitai
+desktop_uidir         = ui
+desktop_applaunchname = huitai.Application

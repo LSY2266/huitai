@@ -1,0 +1,22 @@
+# 运行时数据：绝不要进仓库
+data/
+output/
+*.db
+*.db-journal
+
+# 构建产物
+dist/
+*.fpk
+*.tar
+huitai-*.tar
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+
+# 编辑器 / 系统
+.DS_Store
+.idea/
+.vscode/

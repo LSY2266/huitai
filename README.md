@@ -118,7 +118,8 @@ docker compose up -d --build
 ```
 
 打开 `http://NAS的IP:7401`。国内构建卡在 `pip install` 时，把 `.env` 里 `PIP_INDEX_URL` 换成清华源。
-有离线镜像时直接导入 `huitai-v2.1.0-amd64.tar`（x86_64，约 64MB），无需联网。
+不想在设备上构建就直接拉现成镜像：`docker pull ghcr.io/tarocats/huitai:2.1.1`（多架构，amd64 / arm64 都含）；
+断网环境用 `bash build-image.sh` 在本机打的 `huitai-v<版本>-amd64.tar` 导入也行。
 
 ### 手机
 
@@ -127,9 +128,43 @@ docker compose up -d --build
 > **v2.1 起需要登录**：第一次打开会引导创建管理员账号；普通用户由管理员在「用户管理」里添加。
 > 环境变量（`API_BASE` 等）只在首次启动时作为初始值写入，之后一律以网页设置为准。
 
-### 飞牛NAS
+### 飞牛 NAS（fnOS）
 
-下载fpk，商店中手动上传
+先确认设备架构：`uname -m` 出 `x86_64` 就选 **x86** 包，出 `aarch64` 就选 **arm** 包（两个包内容一样，只是 `manifest` 里声明的平台不同，装错了应用中心会拒绝）。
+
+**1. 应用中心手动装**
+
+到 [Releases](https://github.com/TaroCats/huitai/releases) 下载 `huitai_<版本>_x86.fpk` 或 `huitai_<版本>_arm.fpk`，
+打开「应用中心 → 手动安装」上传即可。装完桌面出现「绘台」图标，点开就是 `http://设备IP:7401`。
+
+数据落在 `/var/apps/huitai/shares/huitai/` 下：`data/` 存数据库与展示图，`output/` 存成品图。
+这块目录由飞牛托管，升级覆盖、卸载重装都不会动它，也能在「文件管理」里直接翻到成品图。
+
+**2. FnDepot 第三方源（装完自动跟随新版本）**
+
+在 FnDepot 里添加源：
+
+```
+https://github.com/TaroCats/huitai
+```
+
+它读仓库根目录的 `fnpack.json`（FnDepot 外部源 V2 规范）。这个文件由 CI 在每次发版时自动回写，
+所以之后有新版本会直接出现在更新列表里，不用再手动下 FPK。
+
+**3. 只跑镜像，不要应用中心那一层**
+
+```bash
+docker run -d --name huitai -p 7401:7401 \
+  -v /vol1/1000/huitai/data:/app/data \
+  -v /vol1/1000/huitai/output:/app/output \
+  ghcr.io/tarocats/huitai:2.1.1
+```
+
+镜像同时含 `linux/amd64` 与 `linux/arm64` 两层，设备自动挑对应那一层。
+
+> **拉不到镜像先看这里**：GHCR 的包第一次推送后默认是**私有**的，而装 FPK 的设备不会 `docker login`。
+> 到仓库 → **Packages** → `huitai` → **Package settings** → 把可见性改成 **Public**（只需一次）。
+> 发版流水线里有一道匿名拉取校验，包还是私有会直接报红并提示这一步。
 
 ---
 
@@ -167,5 +202,47 @@ Windows 本机运行：关机即停服务，已提交任务在下次启动时自
 
 **Q：一打开就要求「访问密码」？**
 它不是管理员密码，是可选网关锁，默认关闭。清空 `data/workbench.db` 的 `access_key` 设置并检查环境变量 `ACCESS_KEY` 即可（详见 README.md）。
+
+
+---
+
+## 七、发版与 CI（维护者看）
+
+版本号只有**一个**地方改：`app/config.py` 里的 `VERSION`。镜像 tag、FPK 的 `manifest`、`/api/health`、网页顶栏全都从它派生。
+
+```bash
+# 1. 改 app/config.py → VERSION = "2.1.2"
+git commit -am "feat: ..."
+git tag v2.1.2
+git push origin main --tags
+```
+
+推 tag 后 [`.github/workflows/release.yml`](.github/workflows/release.yml) 跑五段：
+
+| 阶段 | 干什么 |
+| --- | --- |
+| `prepare` | 从 `app/config.py` 读版本，并校验 tag 与之一致，不一致当场失败 |
+| `docker`（矩阵 amd64 / arm64） | QEMU + buildx 各建一份，**按 digest 推送不打 tag** |
+| `manifest` | 两个 digest 合成多架构清单，打 `:2.1.2` / `:2.1` / `:latest`；起容器打 `/api/health` 冒烟 |
+| `fpk`（矩阵 x86 / arm） | 渲染 `manifest` 与镜像 tag，`fnpack build` 出 `huitai_2.1.2_x86.fpk` / `_arm.fpk` |
+| `release` | 建 GitHub Release 挂两个 FPK；把 `fnpack.json` 回写 main；校验镜像可匿名拉取 |
+
+几个刻意的设计：
+
+- **tag 必须等于 `v` + `VERSION`**，否则 `prepare` 直接报错——防止「tag 打了、包还是旧版本号」这种事后才发现；
+- **镜像先按 digest 推、再合成清单**，所以中途不会出现只有 amd64 的 `:latest` 被谁拉走；
+- **`fnpack.json` 由 CI 生成并提交回 main**，不要手改；要调整内容改 `scripts/gen_fnpack.py`；
+- **FPK 里写死的镜像 tag 由 CI 注入**，不在模板里手写，避免包与镜像版本走偏。
+
+本地想验一遍打包（不推任何东西）：
+
+```bash
+bash scripts/install-fnpack.sh                     # 取 fnpack 1.2.3（带 SHA256 校验）
+python3 scripts/build_fpk.py --arch x86 --version 2.1.1 \
+    --image ghcr.io/tarocats/huitai:2.1.1 --out-dir dist
+python3 scripts/gen_fnpack.py --version 2.1.1 \
+    --package x86=dist/huitai_2.1.1_x86.fpk --package arm=dist/huitai_2.1.1_arm.fpk \
+    --base-url https://github.com/TaroCats/huitai/releases/download/v2.1.1
+```
 
 

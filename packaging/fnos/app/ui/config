@@ -1,0 +1,17 @@
+{
+    ".url": {
+        "huitai.Application": {
+            "title": "绘台",
+            "desc": "AI 生图工作台",
+            "icon": "images/icon_{0}.png",
+            "type": "iframe",
+            "protocol": "http",
+            "port": "7401",
+            "url": "/",
+            "allUsers": true,
+            "control": {
+                "accessPerm": "editable"
+            }
+        }
+    }
+}

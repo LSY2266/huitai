@@ -1,0 +1,27 @@
+# 飞牛 fnOS 专用：配合已导入的 huitai:2.1.1 离线镜像使用
+# 用法：Docker → Compose → 新增项目，项目路径选你上传文件的那个文件夹，粘贴本内容
+# 访问 http://飞牛IP:7401
+#
+# 刻意不写 container_name：Docker 容器名是全局唯一的（不按 Compose 项目隔离）。
+# 若旧版容器还在，写死同名会报 "Conflict. The container name ... is already in use"，
+# 而且旧容器通常还占着 7401 端口。交给 Compose 按项目名自动命名，升级重建都不会撞。
+#
+# ./data 与 ./output 是相对项目路径：Compose 会自动在所选文件夹里建出这两个子目录，
+# 你只需要选一次项目路径，不用分别指定两个本地文件夹。
+services:
+  huitai:
+    image: huitai:2.1.1
+    restart: unless-stopped
+    ports:
+      - "7401:7401"
+    volumes:
+      # 一个父文件夹里并列两个子文件夹：data/ 存数据，output/ 存产出照片
+      - ./data:/app/data
+      - ./output:/app/output
+    environment:
+      TZ: Asia/Shanghai
+      # 可选：仅在首次启动（data 为空）时作为初始值写入，之后一律以网页设置为准
+      # API_BASE: 首次启动可选，留空则装好后在网页「设置」里填写
+      # API_KEY: 首次启动可选，留空则装好后在网页「设置」里填写
+      # LLM_MODEL: gpt-4o-mini
+      # ACCESS_KEY:

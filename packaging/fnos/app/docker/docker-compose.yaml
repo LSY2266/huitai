@@ -1,0 +1,29 @@
+# 飞牛 fnOS 应用包内的 Docker 编排模板
+#
+# 该文件由 scripts/build_fpk.py 在打包时渲染：
+#   镜像占位符 -> ghcr.io/tarocats/huitai:<版本号>（多架构，设备按自身 CPU 自动选层）
+# 不要在仓库里手改镜像 tag，版本号唯一来源是 app/config.py 的 VERSION。
+services:
+  huitai:
+    image: __IMAGE__
+    container_name: huitai
+    restart: unless-stopped
+    ports:
+      - "7401:7401"
+    volumes:
+      # /var/apps/huitai/shares/huitai 由飞牛托管：卸载重装不丢数据，也能在文件管理里看到成品图
+      - /var/apps/huitai/shares/huitai/data:/app/data
+      - /var/apps/huitai/shares/huitai/output:/app/output
+    environment:
+      TZ: Asia/Shanghai
+      # 以下为首次启动的初始值，装好后一律以网页「设置」为准
+      API_BASE: ""
+      API_KEY: ""
+      ACCESS_KEY: ""
+      CONCURRENCY: "2"
+      TIMEOUT: "600"
+    logging:
+      driver: json-file
+      options:
+        max-size: 10m
+        max-file: "3"

@@ -1,0 +1,33 @@
+services:
+  huitai:
+    build:
+      context: .
+      args:
+        PIP_INDEX_URL: ${PIP_INDEX_URL:-https://pypi.org/simple}
+    image: huitai:2.1.1
+    # 不写 container_name，避免与之前部署遗留的同名容器冲突（容器名全局唯一）
+    restart: unless-stopped
+    ports:
+      - "${PORT:-7401}:7401"
+    volumes:
+      # 相对项目路径：Compose 自动在所选文件夹里建出 data/ 与 output/ 两个子目录
+      - ./data:/app/data
+      - ./output:/app/output
+    environment:
+      # 注意：以下环境变量仅在首次启动（数据库为空）时作为初始值写入。
+      # 之后一律以网页「设置」里保存的配置为准。
+      API_BASE: "${API_BASE:-}"
+      API_KEY: "${API_KEY:-}"
+      MODELS: "${MODELS:-gpt-image-2.6-sunburst,gpt-image-2.6-flare,gpt-image-2.5-sunburst,gpt-image-2.5-flare,gpt-image-2.6,gpt-image-2.5}"
+      ACCESS_KEY: "${ACCESS_KEY:-}"
+      CONCURRENCY: "${CONCURRENCY:-2}"
+      TIMEOUT: "${TIMEOUT:-600}"
+      AUTO_RETRY: "${AUTO_RETRY:-0}"
+      I2I_MODE: "${I2I_MODE:-edits}"
+      EDIT_FIELD: "${EDIT_FIELD:-image[]}"
+      MASK_FIELD: "${MASK_FIELD:-mask}"
+      # 语言模型（留空则复用图片服务的地址与 Key）
+      LLM_API_BASE: "${LLM_API_BASE:-}"
+      LLM_API_KEY: "${LLM_API_KEY:-}"
+      LLM_MODEL: "${LLM_MODEL:-gpt-4o-mini}"
+      TZ: "${TZ:-Asia/Shanghai}"
